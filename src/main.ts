@@ -20,18 +20,30 @@ import {
   grandTotal,
   uniqueDonorCount,
 } from './utils/aggregate';
+import {
+  ALL_SECTORS,
+  SECTOR_COLORS,
+  classifySector,
+  computeFlows,
+  buildNetwork,
+  runForceSimulation,
+  buildMatrix,
+  type Sector,
+  type NetworkNode,
+} from './utils/sectors';
 
 // ----------------------------------------------------------------------
 // App state
 // ----------------------------------------------------------------------
 
-type TabId = 'table' | 'donors' | 'recipients' | 'parties' | 'years' | 'jurisdictions';
+type TabId = 'table' | 'donors' | 'recipients' | 'parties' | 'years' | 'jurisdictions' | 'network' | 'flow' | 'matrix';
 
 type AppState = {
   filters: FilterState;
   activeTab: TabId;
   sortField: SortField;
   sortDir: SortDir;
+  sectorFilter: Sector | 'all';
 };
 
 const state: AppState = {
@@ -39,6 +51,7 @@ const state: AppState = {
   activeTab: 'table',
   sortField: 'amount',
   sortDir: 'desc',
+  sectorFilter: 'all',
 };
 
 // Load saved filters from localStorage
@@ -262,6 +275,9 @@ function render(): void {
           <button class="tab-btn" data-tab="recipients" role="tab">Top Recipients</button>
           <button class="tab-btn" data-tab="parties" role="tab">By Party</button>
           <button class="tab-btn" data-tab="years" role="tab">By Year</button>
+          <button class="tab-btn" data-tab="network" role="tab">Relationship Map</button>
+          <button class="tab-btn" data-tab="flow" role="tab">Money Flow</button>
+          <button class="tab-btn" data-tab="matrix" role="tab">Cross-Reference</button>
           <button class="tab-btn" data-tab="jurisdictions" role="tab">Jurisdictions</button>
         </div>
         <div class="tab-content" id="tab-content"></div>
@@ -427,6 +443,18 @@ function renderTabContent(): void {
       break;
     case 'years':
       container.innerHTML = renderYearsView(filtered);
+      break;
+    case 'network':
+      container.innerHTML = renderNetworkView(filtered);
+      attachNetworkHandlers(filtered);
+      break;
+    case 'flow':
+      container.innerHTML = renderFlowView(filtered);
+      attachFlowHandlers();
+      break;
+    case 'matrix':
+      container.innerHTML = renderMatrixView(filtered);
+      attachMatrixHandlers();
       break;
     case 'jurisdictions':
       container.innerHTML = renderJurisdictionsView();
@@ -700,6 +728,408 @@ function renderJurisdictionsView(): string {
     <p class="section-subtitle">Every jurisdiction runs its own disclosure framework with different thresholds, reporting cadences, and caveats. The Commonwealth regime is the most permissive; Victoria is the strictest. Starred thresholds are indexed annually to CPI.</p>
     <div class="jurisdictions-grid">${cards}</div>
   `;
+}
+
+// ----------------------------------------------------------------------
+// Network graph view (relationship map)
+// ----------------------------------------------------------------------
+
+function renderNetworkView(filtered: Donation[]): string {
+  if (filtered.length === 0) return emptyState();
+
+  const sectorOptions = ALL_SECTORS.map(
+    (s) => `<option value="${s}" ${state.sectorFilter === s ? 'selected' : ''}>${s}</option>`,
+  ).join('');
+
+  return `
+    <h3 class="section-title">Donor–Party relationship map</h3>
+    <p class="section-subtitle">
+      Explore how donors connect to recipient parties. Donors are on the left, parties on the right.
+      Line thickness is proportional to donation amount. Node size represents total disclosed value.
+      Filter by industry sector to isolate clusters — for example, see all mining companies and their party connections.
+    </p>
+    <div class="network-controls">
+      <label for="sector-filter">Filter by sector:</label>
+      <select id="sector-filter" class="sector-select">
+        <option value="all" ${state.sectorFilter === 'all' ? 'selected' : ''}>All sectors</option>
+        ${sectorOptions}
+      </select>
+      <span class="network-hint">Hover over a node to highlight its connections</span>
+    </div>
+    <div class="network-canvas-wrap">
+      <svg id="network-svg" class="network-svg" viewBox="-600 -450 1200 900" preserveAspectRatio="xMidYMid meet"></svg>
+    </div>
+    <div class="legend network-legend" id="network-legend"></div>
+  `;
+}
+
+function attachNetworkHandlers(filtered: Donation[]): void {
+  // Build and simulate network
+  const sectorFiltered =
+    state.sectorFilter === 'all'
+      ? filtered
+      : filtered.filter((d) => classifySector(d) === state.sectorFilter);
+
+  const { nodes, edges } = buildNetwork(sectorFiltered);
+  runForceSimulation(nodes, edges, 200);
+
+  const svg = document.getElementById('network-svg')!;
+  const nodeIndex = new Map<string, NetworkNode>();
+  for (const n of nodes) nodeIndex.set(n.id, n);
+
+  // Draw edges
+  const maxEdge = Math.max(...edges.map((e) => e.amount), 1);
+  const edgeEls: SVGPathElement[] = [];
+  for (const edge of edges) {
+    const src = nodeIndex.get(edge.sourceId);
+    const tgt = nodeIndex.get(edge.targetId);
+    if (!src || !tgt) continue;
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    const cx = (src.x + tgt.x) / 2;
+    const d = `M ${src.x} ${src.y} Q ${cx} ${src.y} ${cx} ${(src.y + tgt.y) / 2} Q ${cx} ${tgt.y} ${tgt.x} ${tgt.y}`;
+    path.setAttribute('d', d);
+    const width = 0.5 + 4 * Math.sqrt(edge.amount / maxEdge);
+    const opacity = 0.12 + 0.35 * Math.sqrt(edge.amount / maxEdge);
+    path.setAttribute('stroke', '#94a3b8');
+    path.setAttribute('stroke-width', String(width));
+    path.setAttribute('stroke-opacity', String(opacity));
+    path.setAttribute('fill', 'none');
+    path.dataset.source = edge.sourceId;
+    path.dataset.target = edge.targetId;
+    path.classList.add('network-edge');
+    svg.appendChild(path);
+    edgeEls.push(path);
+  }
+
+  // Draw nodes
+  const nodeEls: SVGGElement[] = [];
+  for (const node of nodes) {
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.classList.add('network-node');
+    g.dataset.nodeId = node.id;
+
+    const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    circle.setAttribute('cx', String(node.x));
+    circle.setAttribute('cy', String(node.y));
+    circle.setAttribute('r', String(node.radius));
+
+    if (node.type === 'donor') {
+      const color = SECTOR_COLORS[node.sector!] ?? '#6b7280';
+      circle.setAttribute('fill', color);
+      circle.setAttribute('fill-opacity', '0.85');
+      circle.setAttribute('stroke', color);
+      circle.setAttribute('stroke-width', '1.5');
+    } else {
+      const party = PARTIES[node.partyCode as PartyCode];
+      circle.setAttribute('fill', party?.colour ?? '#6b7280');
+      circle.setAttribute('fill-opacity', '0.9');
+      circle.setAttribute('stroke', party?.colour ?? '#6b7280');
+      circle.setAttribute('stroke-width', '2');
+    }
+    g.appendChild(circle);
+
+    // Label for recipient nodes and large donors
+    if (node.type === 'recipient' || node.radius > 10) {
+      const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      text.setAttribute('x', String(node.x + (node.type === 'recipient' ? node.radius + 6 : -node.radius - 6)));
+      text.setAttribute('y', String(node.y + 4));
+      text.setAttribute('text-anchor', node.type === 'recipient' ? 'start' : 'end');
+      text.setAttribute('font-size', node.type === 'recipient' ? '13' : '10');
+      text.setAttribute('font-weight', node.type === 'recipient' ? '700' : '500');
+      text.setAttribute('fill', 'var(--text-primary)');
+      text.setAttribute('pointer-events', 'none');
+      const label = node.type === 'recipient' ? (PARTIES[node.partyCode as PartyCode]?.shortName ?? node.label) : node.label;
+      text.textContent = label.length > 28 ? label.slice(0, 27) + '\u2026' : label;
+      g.appendChild(text);
+    }
+    svg.appendChild(g);
+    nodeEls.push(g);
+  }
+
+  // Interaction: hover to highlight
+  const tooltip = ensureGlossaryTooltip(); // reuse the existing tooltip div
+  for (const g of nodeEls) {
+    g.addEventListener('mouseenter', () => {
+      const id = g.dataset.nodeId!;
+      const node = nodeIndex.get(id)!;
+      // Dim all edges, highlight connected
+      for (const path of edgeEls) {
+        const connected = path.dataset.source === id || path.dataset.target === id;
+        path.setAttribute('stroke-opacity', connected ? '0.8' : '0.03');
+        path.setAttribute('stroke', connected ? (node.type === 'donor' ? SECTOR_COLORS[node.sector!] ?? '#475569' : PARTIES[node.partyCode as PartyCode]?.colour ?? '#475569') : '#94a3b8');
+      }
+      // Show tooltip
+      const rect = (g.querySelector('circle') as SVGCircleElement).getBoundingClientRect();
+      tooltip.innerHTML = `
+        <h5>${escapeHtml(node.label)}</h5>
+        <p class="short">${node.type === 'donor' ? escapeHtml(node.sector ?? '') : escapeHtml(PARTIES[node.partyCode as PartyCode]?.name ?? '')}</p>
+        <p>Total: <strong>${formatCurrency(node.total, { compact: true })}</strong></p>
+      `;
+      tooltip.classList.add('visible');
+      tooltip.style.left = `${rect.left + rect.width / 2 - 120}px`;
+      tooltip.style.top = `${rect.bottom + 8}px`;
+    });
+    g.addEventListener('mouseleave', () => {
+      for (const path of edgeEls) {
+        const edge = edges.find((e) => e.sourceId === path.dataset.source && e.targetId === path.dataset.target);
+        const opacity = edge ? 0.12 + 0.35 * Math.sqrt(edge.amount / maxEdge) : 0.15;
+        path.setAttribute('stroke-opacity', String(opacity));
+        path.setAttribute('stroke', '#94a3b8');
+      }
+      tooltip.classList.remove('visible');
+    });
+  }
+
+  // Sector filter handler
+  const select = document.getElementById('sector-filter') as HTMLSelectElement | null;
+  select?.addEventListener('change', () => {
+    state.sectorFilter = select.value as Sector | 'all';
+    renderTabContent();
+    attachNetworkHandlers(filtered);
+  });
+
+  // Build legend
+  const legendEl = document.getElementById('network-legend')!;
+  const sectorItems = ALL_SECTORS
+    .filter((s) => nodes.some((n) => n.sector === s))
+    .map((s) => `<span><span class="party-swatch" style="background:${SECTOR_COLORS[s]}"></span>${s}</span>`)
+    .join('');
+  const partyItems = nodes
+    .filter((n) => n.type === 'recipient')
+    .map((n) => {
+      const p = PARTIES[n.partyCode as PartyCode];
+      return p ? `<span><span class="party-swatch" style="background:${p.colour}"></span>${p.shortName}</span>` : '';
+    })
+    .join('');
+  legendEl.innerHTML = `<div style="margin-bottom:var(--space-sm);font-weight:600;font-size:var(--font-size-xs);color:var(--text-tertiary)">SECTORS (donors)</div>${sectorItems}<div style="margin-top:var(--space-md);margin-bottom:var(--space-sm);font-weight:600;font-size:var(--font-size-xs);color:var(--text-tertiary)">PARTIES (recipients)</div>${partyItems}`;
+}
+
+// ----------------------------------------------------------------------
+// Flow view (Sankey-style sector → party)
+// ----------------------------------------------------------------------
+
+function renderFlowView(filtered: Donation[]): string {
+  if (filtered.length === 0) return emptyState();
+
+  const flows = computeFlows(filtered);
+  if (flows.length === 0) return emptyState();
+
+  // Collect all parties that receive donations
+  const partyTotals = new Map<string, number>();
+  for (const sf of flows) {
+    for (const f of sf.flows) {
+      partyTotals.set(f.partyCode, (partyTotals.get(f.partyCode) ?? 0) + f.amount);
+    }
+  }
+  const partiesSorted = [...partyTotals.entries()].sort((a, b) => b[1] - a[1]);
+
+  const svgW = 900;
+  const svgH = Math.max(500, flows.length * 42, partiesSorted.length * 50);
+  const leftX = 200;
+  const rightX = svgW - 200;
+
+  // Compute Y positions for sectors (left)
+  const totalAll = flows.reduce((s, f) => s + f.total, 0);
+  let sectorY = 30;
+  const sectorPositions: Array<{ sector: Sector; y: number; h: number; total: number }> = [];
+  for (const sf of flows) {
+    const h = Math.max(18, (sf.total / totalAll) * (svgH - 60));
+    sectorPositions.push({ sector: sf.sector, y: sectorY, h, total: sf.total });
+    sectorY += h + 4;
+  }
+
+  // Compute Y positions for parties (right)
+  const partyAll = partiesSorted.reduce((s, [, v]) => s + v, 0);
+  let partyY = 30;
+  const partyPositions: Array<{ code: string; y: number; h: number; total: number }> = [];
+  for (const [code, total] of partiesSorted) {
+    const h = Math.max(18, (total / partyAll) * (svgH - 60));
+    partyPositions.push({ code, y: partyY, h, total });
+    partyY += h + 4;
+  }
+
+  // Draw paths sector → party
+  let pathsSvg = '';
+  for (let si = 0; si < flows.length; si++) {
+    const sf = flows[si];
+    const sp = sectorPositions[si];
+    let sOffset = 0;
+    for (const f of sf.flows) {
+      const pp = partyPositions.find((p) => p.code === f.partyCode);
+      if (!pp) continue;
+      const party = PARTIES[f.partyCode as PartyCode];
+      const flowH = Math.max(1, (f.amount / totalAll) * (svgH - 60));
+      const srcY = sp.y + sOffset + flowH / 2;
+      const tgtY = pp.y + pp.h / 2;
+      const cx1 = leftX + (rightX - leftX) * 0.35;
+      const cx2 = leftX + (rightX - leftX) * 0.65;
+      pathsSvg += `<path d="M ${leftX} ${srcY} C ${cx1} ${srcY}, ${cx2} ${tgtY}, ${rightX} ${tgtY}"
+        fill="none" stroke="${party?.colour ?? '#6b7280'}" stroke-width="${flowH}"
+        stroke-opacity="0.25" class="flow-path"
+        data-sector="${escapeHtml(sf.sector)}" data-party="${f.partyCode}"
+        data-amount="${f.amount}" />`;
+      sOffset += flowH;
+    }
+  }
+
+  // Draw sector labels (left)
+  let sectorLabelsSvg = '';
+  for (const sp of sectorPositions) {
+    const color = SECTOR_COLORS[sp.sector];
+    sectorLabelsSvg += `<rect x="${leftX - 8}" y="${sp.y}" width="8" height="${sp.h}" rx="2" fill="${color}" />`;
+    sectorLabelsSvg += `<text x="${leftX - 14}" y="${sp.y + sp.h / 2 + 4}" text-anchor="end" font-size="11" font-weight="500" fill="var(--text-primary)">${escapeHtml(sp.sector)}</text>`;
+    sectorLabelsSvg += `<text x="${leftX - 14}" y="${sp.y + sp.h / 2 + 16}" text-anchor="end" font-size="9" fill="var(--text-tertiary)">${formatCurrency(sp.total, { compact: true })}</text>`;
+  }
+
+  // Draw party labels (right)
+  let partyLabelsSvg = '';
+  for (const pp of partyPositions) {
+    const party = PARTIES[pp.code as PartyCode];
+    partyLabelsSvg += `<rect x="${rightX}" y="${pp.y}" width="8" height="${pp.h}" rx="2" fill="${party?.colour ?? '#6b7280'}" />`;
+    partyLabelsSvg += `<text x="${rightX + 14}" y="${pp.y + pp.h / 2 + 4}" text-anchor="start" font-size="11" font-weight="500" fill="var(--text-primary)">${escapeHtml(party?.shortName ?? pp.code)}</text>`;
+    partyLabelsSvg += `<text x="${rightX + 14}" y="${pp.y + pp.h / 2 + 16}" text-anchor="start" font-size="9" fill="var(--text-tertiary)">${formatCurrency(pp.total, { compact: true })}</text>`;
+  }
+
+  return `
+    <h3 class="section-title">Money flow: sectors to parties</h3>
+    <p class="section-subtitle">
+      How money flows from industry sectors to political parties. Width of each flow is proportional to total disclosed amount.
+      Hover over a flow to see the exact amount. Colour follows the recipient party.
+    </p>
+    <div class="flow-svg-wrap">
+      <svg id="flow-svg" class="flow-svg" viewBox="0 0 ${svgW} ${svgH + 40}" preserveAspectRatio="xMidYMid meet">
+        ${pathsSvg}
+        ${sectorLabelsSvg}
+        ${partyLabelsSvg}
+      </svg>
+    </div>
+    <div id="flow-tooltip" class="flow-tooltip"></div>
+  `;
+}
+
+function attachFlowHandlers(): void {
+  const tooltip = document.getElementById('flow-tooltip')!;
+  document.querySelectorAll<SVGPathElement>('.flow-path').forEach((path) => {
+    path.addEventListener('mouseenter', (e) => {
+      path.setAttribute('stroke-opacity', '0.65');
+      const sector = path.dataset.sector ?? '';
+      const partyCode = path.dataset.party ?? '';
+      const amount = Number(path.dataset.amount);
+      const party = PARTIES[partyCode as PartyCode];
+      tooltip.innerHTML = `<strong>${escapeHtml(sector)}</strong> &rarr; <strong>${escapeHtml(party?.shortName ?? partyCode)}</strong><br>${formatCurrency(amount)}`;
+      tooltip.style.display = 'block';
+      tooltip.style.left = `${(e as MouseEvent).clientX + 12}px`;
+      tooltip.style.top = `${(e as MouseEvent).clientY - 20}px`;
+    });
+    path.addEventListener('mousemove', (e) => {
+      tooltip.style.left = `${(e as MouseEvent).clientX + 12}px`;
+      tooltip.style.top = `${(e as MouseEvent).clientY - 20}px`;
+    });
+    path.addEventListener('mouseleave', () => {
+      path.setAttribute('stroke-opacity', '0.25');
+      tooltip.style.display = 'none';
+    });
+  });
+}
+
+// ----------------------------------------------------------------------
+// Matrix view (donor × party heatmap)
+// ----------------------------------------------------------------------
+
+function renderMatrixView(filtered: Donation[]): string {
+  if (filtered.length === 0) return emptyState();
+
+  const data = buildMatrix(filtered, 30);
+  if (data.donors.length === 0) return emptyState();
+
+  // Color scale: white → amber → deep orange
+  const cellColor = (amount: number): string => {
+    if (amount === 0) return 'transparent';
+    // Log scale for better visual distribution
+    const logMax = Math.log10(data.maxCell + 1);
+    const logVal = Math.log10(amount + 1);
+    const t = logVal / logMax;
+    // Interpolate from light amber to deep orange
+    const r = Math.round(255);
+    const g = Math.round(245 - t * 145);
+    const b = Math.round(235 - t * 195);
+    return `rgb(${r}, ${g}, ${b})`;
+  };
+
+  const headerCells = data.parties
+    .map((code) => {
+      const party = PARTIES[code as PartyCode];
+      return `<th class="matrix-party-header" style="writing-mode: vertical-lr; text-orientation: mixed;">
+        <span class="party-swatch" style="background:${party?.colour ?? '#6b7280'}"></span>
+        ${escapeHtml(party?.shortName ?? code)}
+      </th>`;
+    })
+    .join('');
+
+  const rows = data.donors
+    .map((donor) => {
+      const sector = data.donorSectors.get(donor)!;
+      const total = data.donorTotals.get(donor) ?? 0;
+      const cells = data.parties
+        .map((party) => {
+          const amount = data.cells.get(`${donor}||${party}`) ?? 0;
+          const bg = cellColor(amount);
+          const textColor = amount > 0 ? (amount > data.maxCell * 0.3 ? '#7c2d12' : '#92400e') : '';
+          return `<td class="matrix-cell" style="background:${bg};${textColor ? 'color:' + textColor : ''}"
+            data-donor="${escapeHtml(donor)}" data-party="${party}" data-amount="${amount}"
+            title="${escapeHtml(donor)} → ${PARTIES[party as PartyCode]?.shortName ?? party}: ${amount > 0 ? formatCurrency(amount) : 'No donation'}">
+            ${amount > 0 ? formatCurrency(amount, { compact: true }) : ''}
+          </td>`;
+        })
+        .join('');
+      return `
+        <tr>
+          <td class="matrix-donor-cell">
+            <span class="party-swatch" style="background:${SECTOR_COLORS[sector]}"></span>
+            <span class="matrix-donor-name" title="${escapeHtml(donor)}">${escapeHtml(donor.length > 32 ? donor.slice(0, 31) + '\u2026' : donor)}</span>
+          </td>
+          <td class="matrix-total">${formatCurrency(total, { compact: true })}</td>
+          ${cells}
+        </tr>
+      `;
+    })
+    .join('');
+
+  return `
+    <h3 class="section-title">Donor &times; Party cross-reference</h3>
+    <p class="section-subtitle">
+      Heatmap showing who gives to whom. Rows are the top ${data.donors.length} donors by total amount.
+      Columns are recipient parties. Darker cells mean larger donations.
+      Hover over any cell for the exact figure. Look for rows with colour in multiple columns — those are
+      donors who give to both sides of politics.
+    </p>
+    <div class="matrix-wrap">
+      <table class="matrix-table">
+        <thead>
+          <tr>
+            <th class="matrix-corner">Donor</th>
+            <th class="matrix-total-header">Total</th>
+            ${headerCells}
+          </tr>
+        </thead>
+        <tbody>
+          ${rows}
+        </tbody>
+      </table>
+    </div>
+    <div class="matrix-color-legend">
+      <span class="matrix-legend-label">Donation size:</span>
+      <div class="matrix-gradient"></div>
+      <span class="matrix-legend-range">${formatCurrency(0)} &mdash; ${formatCurrency(data.maxCell, { compact: true })}</span>
+    </div>
+  `;
+}
+
+function attachMatrixHandlers(): void {
+  document.querySelectorAll<HTMLTableCellElement>('.matrix-cell').forEach((cell) => {
+    cell.addEventListener('mouseenter', () => cell.classList.add('matrix-cell-hover'));
+    cell.addEventListener('mouseleave', () => cell.classList.remove('matrix-cell-hover'));
+  });
 }
 
 // ----------------------------------------------------------------------
