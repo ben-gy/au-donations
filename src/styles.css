@@ -812,6 +812,27 @@ select {
   border-top: 1px solid var(--border-subtle);
 }
 
+/* Global hover tooltip for [data-tip] data marks (copied tooltip.ts). */
+.hover-tip {
+  position: fixed;
+  z-index: 10000;
+  max-width: 320px;
+  padding: 0.4rem 0.6rem;
+  background: var(--text-primary);
+  color: var(--text-inverse);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 100ms ease;
+  box-shadow: var(--shadow-md);
+}
+
+.hover-tip.visible {
+  opacity: 1;
+}
+
 /* ---------------------------------------------------------------------- */
 /* Modal                                                                  */
 /* ---------------------------------------------------------------------- */
@@ -1083,11 +1104,51 @@ select {
 }
 
 .network-canvas-wrap {
+  position: relative;
   background: var(--bg-base);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   padding: var(--space-md);
   overflow: hidden;
+}
+
+/* Zoom/pan controls for the network SVG (copied svgZoom.ts injects these). */
+.svg-zoom-controls {
+  position: absolute;
+  top: var(--space-md);
+  right: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  z-index: 5;
+}
+
+.svg-zoom-controls button {
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 1rem;
+  line-height: 1;
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.svg-zoom-controls button:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+}
+
+.svg-zoom-controls button:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 1px;
 }
 
 .network-svg {

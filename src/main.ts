@@ -32,6 +32,8 @@ import {
   type Sector,
   type NetworkNode,
 } from './utils/sectors';
+import { attachSvgZoom } from './utils/svgZoom';
+import { initTooltip } from './utils/tooltip';
 
 // ----------------------------------------------------------------------
 // App state
@@ -516,7 +518,7 @@ function renderTableView(filtered: Donation[]): string {
           <div>${escapeHtml(d.recipient)}</div>
           <span class="party-pill" style="background:${party?.colour ?? '#6b7280'}">${escapeHtml(party?.shortName ?? d.recipientParty)}</span>
         </td>
-        <td><span class="jurisdiction-pill" title="${escapeHtml(jurisdictionName)}">${escapeHtml(d.jurisdiction)}</span></td>
+        <td><span class="jurisdiction-pill" data-tip="${escapeHtml(jurisdictionName)}" aria-label="${escapeHtml(jurisdictionName)}">${escapeHtml(d.jurisdiction)}</span></td>
         <td class="fy-cell">${escapeHtml(fyLabel(d.fy))}</td>
         <td class="amount">${formatCurrency(d.amount)}</td>
       </tr>
@@ -580,12 +582,13 @@ function renderTopDonorsView(filtered: Donation[]): string {
         .map(([code, amount]) => {
           const party = PARTIES[code];
           const pct = (amount / max) * 100;
-          return `<div class="bar-fill" style="width:${pct}%; background:${party.colour}" title="${party.shortName}: ${formatCurrency(amount)}"></div>`;
+          const tip = `${party.shortName}: ${formatCurrency(amount)}`;
+          return `<div class="bar-fill" style="width:${pct}%; background:${party.colour}" data-tip="${escapeHtml(tip)}" aria-label="${escapeHtml(tip)}"></div>`;
         })
         .join('');
       return `
         <div class="bar-row">
-          <div class="label" title="${escapeHtml(entry.name)}">${escapeHtml(entry.name)}</div>
+          <div class="label" data-tip="${escapeHtml(entry.name)}" aria-label="${escapeHtml(entry.name)}">${escapeHtml(entry.name)}</div>
           <div class="bar-track">${segments}</div>
           <div class="value">${formatCurrency(entry.total, { compact: true })}</div>
         </div>
@@ -610,10 +613,11 @@ function renderTopRecipientsView(filtered: Donation[]): string {
       const code = Object.keys(entry.byParty)[0] as PartyCode;
       const party = PARTIES[code];
       const pct = (entry.total / max) * 100;
+      const barTip = `${party?.shortName ?? code}: ${formatCurrency(entry.total)}`;
       return `
         <div class="bar-row">
-          <div class="label" title="${escapeHtml(entry.name)}">${escapeHtml(entry.name)}</div>
-          <div class="bar-track"><div class="bar-fill" style="width:${pct}%; background:${party?.colour ?? '#6b7280'}"></div></div>
+          <div class="label" data-tip="${escapeHtml(entry.name)}" aria-label="${escapeHtml(entry.name)}">${escapeHtml(entry.name)}</div>
+          <div class="bar-track"><div class="bar-fill" style="width:${pct}%; background:${party?.colour ?? '#6b7280'}" data-tip="${escapeHtml(barTip)}" aria-label="${escapeHtml(barTip)}"></div></div>
           <div class="value">${formatCurrency(entry.total, { compact: true })}</div>
         </div>
       `;
@@ -672,7 +676,8 @@ function renderYearsView(filtered: Donation[]): string {
         .map(([code, amount]) => {
           const party = PARTIES[code];
           const pct = (amount / max) * 100;
-          return `<div class="bar-fill" style="width:${pct}%; background:${party.colour}" title="${party.shortName}: ${formatCurrency(amount)}"></div>`;
+          const tip = `${party.shortName}: ${formatCurrency(amount)}`;
+          return `<div class="bar-fill" style="width:${pct}%; background:${party.colour}" data-tip="${escapeHtml(tip)}" aria-label="${escapeHtml(tip)}"></div>`;
         })
         .join('');
       return `
@@ -896,12 +901,13 @@ function attachNetworkHandlers(filtered: Donation[]): void {
     });
   }
 
-  // Sector filter handler
+  // Sector filter handler. renderTabContent() re-invokes attachNetworkHandlers
+  // for the network tab, so we must NOT call it again here — doing so would
+  // draw a second overlaid graph and append a duplicate set of zoom controls.
   const select = document.getElementById('sector-filter') as HTMLSelectElement | null;
   select?.addEventListener('change', () => {
     state.sectorFilter = select.value as Sector | 'all';
     renderTabContent();
-    attachNetworkHandlers(filtered);
   });
 
   // Build legend
@@ -918,6 +924,12 @@ function attachNetworkHandlers(filtered: Donation[]): void {
     })
     .join('');
   legendEl.innerHTML = `<div style="margin-bottom:var(--space-sm);font-weight:600;font-size:var(--font-size-xs);color:var(--text-tertiary)">SECTORS (donors)</div>${sectorItems}<div style="margin-top:var(--space-md);margin-bottom:var(--space-sm);font-weight:600;font-size:var(--font-size-xs);color:var(--text-tertiary)">PARTIES (recipients)</div>${partyItems}`;
+
+  // Wheel-zoom + drag-pan for the dense graph. The copied svgZoom util defers
+  // pointer capture until a real >4px drag, so the per-node mouseenter/mouseleave
+  // handlers wired above keep firing on hover and a plain click still reaches
+  // child nodes.
+  attachSvgZoom(svg as unknown as SVGSVGElement);
 }
 
 // ----------------------------------------------------------------------
@@ -1091,9 +1103,10 @@ function renderMatrixView(filtered: Donation[]): string {
           const amount = data.cells.get(`${donor}||${party}`) ?? 0;
           const bg = cellColor(amount);
           const textColor = amount > 0 ? (amount > data.maxCell * 0.3 ? '#7c2d12' : '#92400e') : '';
+          const cellTip = `${donor} → ${PARTIES[party as PartyCode]?.shortName ?? party}: ${amount > 0 ? formatCurrency(amount) : 'No donation'}`;
           return `<td class="matrix-cell" style="background:${bg};${textColor ? 'color:' + textColor : ''}"
             data-donor="${escapeHtml(donor)}" data-party="${party}" data-amount="${amount}"
-            title="${escapeHtml(donor)} → ${PARTIES[party as PartyCode]?.shortName ?? party}: ${amount > 0 ? formatCurrency(amount) : 'No donation'}">
+            data-tip="${escapeHtml(cellTip)}" aria-label="${escapeHtml(cellTip)}">
             ${amount > 0 ? formatCurrency(amount, { compact: true }) : ''}
           </td>`;
         })
@@ -1102,7 +1115,7 @@ function renderMatrixView(filtered: Donation[]): string {
         <tr>
           <td class="matrix-donor-cell">
             <span class="party-swatch" style="background:${SECTOR_COLORS[sector]}"></span>
-            <span class="matrix-donor-name" title="${escapeHtml(donor)}">${escapeHtml(donor.length > 32 ? donor.slice(0, 31) + '\u2026' : donor)}</span>
+            <span class="matrix-donor-name" data-tip="${escapeHtml(donor)}" aria-label="${escapeHtml(donor)}">${escapeHtml(donor.length > 32 ? donor.slice(0, 31) + '\u2026' : donor)}</span>
           </td>
           <td class="matrix-total">${formatCurrency(total, { compact: true })}</td>
           ${cells}
@@ -1289,4 +1302,5 @@ async function boot(): Promise<void> {
   render();
 }
 
+initTooltip();
 void boot();
