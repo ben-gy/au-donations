@@ -289,7 +289,7 @@ function render(): void {
         <div class="footer-col">
           <h5>About this site</h5>
           <p>Donations AU unifies Australia's federal and state political donation registers into one searchable interface. The data is drawn from publicly disclosed returns and is illustrative only — consult the source registers for authoritative figures.</p>
-          <p>Built by <a href="https://benrichardson.dev/">benrichardson.dev</a>. No analytics, no cookies, no tracking.</p>
+          <p>Built by <a href="https://benrichardson.dev/">benrichardson.dev</a>. No cookies, no tracking — only anonymous, cookie-less page-view counts via Cloudflare Web Analytics.</p>
         </div>
         <div class="footer-col">
           <h5>Official registers</h5>

@@ -43,7 +43,7 @@ Journalists chasing a political-finance story, researchers and policy analysts m
 - **Jurisdiction comparison** — side-by-side cards for all 9 Australian disclosure regimes with thresholds, cadences, lag descriptions, and caveats.
 - **Glossary tooltips** — click the `i` icons next to jargon terms (disclosure threshold, associated entity, aggregation, prohibited donor, etc.) for plain-language definitions.
 - **About & Sources modal** — methodology, data provenance, and links to every authoritative register.
-- **No tracking, no analytics, no cookies, no third-party fonts.** Filter and tab state is persisted to localStorage only.
+- **No cookies, no fingerprinting, no third-party fonts.** The only analytics is Cloudflare Web Analytics — anonymous, cookie-less page-view counts; no personal data, no cross-site tracking. Filter and tab state is persisted to localStorage only.
 
 ## Tech Stack
 
