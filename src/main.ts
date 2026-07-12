@@ -1,5 +1,6 @@
 import './styles.css';
-import { DONATIONS_FILTERED, type Donation, type DonorType } from './data/donations';
+import { STATE_DONATIONS_FILTERED, type Donation, type DonorType } from './data/donations';
+import { loadFederalDonations, type FederalMeta } from './data/federal';
 import { PARTIES, type PartyCode } from './data/parties';
 import { JURISDICTIONS, JURISDICTION_BY_CODE, type Jurisdiction } from './data/jurisdictions';
 import { GLOSSARY, GLOSSARY_LIST } from './data/glossary';
@@ -53,6 +54,13 @@ const state: AppState = {
   sortDir: 'desc',
   sectorFilter: 'all',
 };
+
+// The working dataset: federal records fetched from public/data/donations.json
+// (mirrored yearly from the AEC bulk export) plus the curated state-register
+// snapshot. Populated during boot before the first render.
+let ALL_DONATIONS: Donation[] = STATE_DONATIONS_FILTERED;
+let federalMeta: FederalMeta | null = null;
+let federalLoadFailed = false;
 
 // Load saved filters from localStorage
 try {
@@ -188,7 +196,8 @@ function aboutModalHtml(): string {
     </ul>
 
     <h3>About the data</h3>
-    <p>This site ships with a <strong>curated snapshot</strong> of ${DONATIONS_FILTERED.length} publicly disclosed donation records drawn from the registers above, covering recent financial years. Amounts reflect publicly reported figures and have been lightly rounded. The snapshot is illustrative — it is <em>not</em> an exhaustive or live mirror of every disclosure ever filed. For authoritative data, always consult the source registers.</p>
+    <p><strong>Federal (AEC):</strong> ${federalMeta ? `${formatNumber(federalMeta.recordCount)} records mirrored from the AEC Transparency Register bulk export — donations reported by donors in their federal annual returns, covering ${escapeHtml(federalMeta.financialYears[0] ?? '')} to ${escapeHtml(federalMeta.financialYears[federalMeta.financialYears.length - 1] ?? '')} (last refreshed ${escapeHtml(federalMeta.generatedAt.slice(0, 10))}).` : 'mirrored from the AEC Transparency Register bulk export.'} The AEC publishes annual returns each February; this site refreshes automatically every March. Individual dated payments are aggregated per financial year, donor, and recipient; donor types are <em>inferred from donor names</em> (the register carries no type field), and recipient names are mapped to parties by keyword.</p>
+    <p><strong>State &amp; territory:</strong> a <strong>curated snapshot</strong> of ${STATE_DONATIONS_FILTERED.length} publicly disclosed records drawn from the eight state and territory registers. Those registers publish no machine-readable bulk exports, so they cannot be mirrored — this portion is illustrative only, with amounts lightly rounded, and is <em>not</em> an exhaustive or live mirror. For authoritative data, always consult the source registers.</p>
 
     <h3>Key caveats</h3>
     <ul>
@@ -248,7 +257,8 @@ function render(): void {
     <section class="hero">
       <div class="hero-inner">
         <h1>Follow the money in Australian politics</h1>
-        <p>Search across federal and state donation registers — over ${DONATIONS_FILTERED.length} disclosed records from the AEC Transparency Register plus six state and two territory regulators. One search box, eight jurisdictions.</p>
+        <p>Search across federal and state donation registers — ${formatNumber(ALL_DONATIONS.length)} disclosed records from the AEC Transparency Register (refreshed yearly) plus a curated snapshot from the state and territory regulators. One search box, nine jurisdictions.</p>
+        ${federalLoadFailed ? '<p class="data-notice">Federal register data failed to load — showing the curated state snapshot only. Try reloading the page.</p>' : ''}
         <div class="search-wrap">
           <svg class="search-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.35-4.35"></path></svg>
           <input
@@ -288,7 +298,7 @@ function render(): void {
       <div class="site-footer-inner">
         <div class="footer-col">
           <h5>About this site</h5>
-          <p>Donations AU unifies Australia's federal and state political donation registers into one searchable interface. The data is drawn from publicly disclosed returns and is illustrative only — consult the source registers for authoritative figures.</p>
+          <p>Donations AU unifies Australia's federal and state political donation registers into one searchable interface. Federal records mirror the AEC Transparency Register bulk export and refresh yearly; state records are an illustrative curated snapshot. Consult the source registers for authoritative figures.</p>
           <p>Built by <a href="https://benrichardson.dev/">benrichardson.dev</a>. No cookies, no tracking — only anonymous, cookie-less page-view counts via Cloudflare Web Analytics.</p>
         </div>
         <div class="footer-col">
@@ -333,7 +343,7 @@ function renderFilterRail(): void {
   const jurisdictionCounts = new Map<string, number>();
   const partyCounts = new Map<string, number>();
   const donorTypeCounts = new Map<string, number>();
-  for (const d of DONATIONS_FILTERED) {
+  for (const d of ALL_DONATIONS) {
     jurisdictionCounts.set(d.jurisdiction, (jurisdictionCounts.get(d.jurisdiction) ?? 0) + 1);
     partyCounts.set(d.recipientParty, (partyCounts.get(d.recipientParty) ?? 0) + 1);
     donorTypeCounts.set(d.donorType, (donorTypeCounts.get(d.donorType) ?? 0) + 1);
@@ -407,7 +417,7 @@ function renderFilterRail(): void {
 // ----------------------------------------------------------------------
 
 function getFilteredDonations(): Donation[] {
-  return filterDonations(DONATIONS_FILTERED, state.filters);
+  return filterDonations(ALL_DONATIONS, state.filters);
 }
 
 function updateResultSummary(filtered: Donation[]): void {
@@ -416,7 +426,7 @@ function updateResultSummary(filtered: Donation[]): void {
   const total = grandTotal(filtered);
   const donors = uniqueDonorCount(filtered);
   summary.innerHTML = `
-    Showing <strong>${formatNumber(filtered.length)}</strong> of ${formatNumber(DONATIONS_FILTERED.length)} records &middot;
+    Showing <strong>${formatNumber(filtered.length)}</strong> of ${formatNumber(ALL_DONATIONS.length)} records &middot;
     <strong>${formatCurrency(total, { compact: true })}</strong> total disclosed &middot;
     <strong>${formatNumber(donors)}</strong> unique donors
   `;
@@ -770,8 +780,14 @@ function attachNetworkHandlers(filtered: Donation[]): void {
       ? filtered
       : filtered.filter((d) => classifySector(d) === state.sectorFilter);
 
-  const { nodes, edges } = buildNetwork(sectorFiltered);
+  const { nodes, edges, totalDonorCount } = buildNetwork(sectorFiltered);
   runForceSimulation(nodes, edges, 200);
+
+  const donorNodeCount = nodes.filter((n) => n.type === 'donor').length;
+  const hint = document.querySelector('.network-hint');
+  if (hint && donorNodeCount < totalDonorCount) {
+    hint.textContent = `Showing the top ${formatNumber(donorNodeCount)} of ${formatNumber(totalDonorCount)} donors by total — hover over a node to highlight its connections`;
+  }
 
   const svg = document.getElementById('network-svg')!;
   const nodeIndex = new Map<string, NetworkNode>();
@@ -1257,7 +1273,20 @@ document.addEventListener('click', (e) => {
 });
 
 // ----------------------------------------------------------------------
-// Boot
+// Boot — fetch the federal dataset, then render. On failure the app still
+// works with the curated state snapshot plus a visible notice.
 // ----------------------------------------------------------------------
 
-render();
+async function boot(): Promise<void> {
+  const app = document.getElementById('app')!;
+  app.innerHTML = '<div class="boot-loading">Loading donation data…</div>';
+
+  const federal = await loadFederalDonations();
+  federalMeta = federal.meta;
+  federalLoadFailed = federal.donations.length === 0;
+  ALL_DONATIONS = [...federal.donations, ...STATE_DONATIONS_FILTERED];
+
+  render();
+}
+
+void boot();

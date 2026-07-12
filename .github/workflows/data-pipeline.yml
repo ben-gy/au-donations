@@ -1,0 +1,71 @@
+name: Data pipeline — AEC yearly refresh
+
+# Cadence policy: refresh frequency is proportional to how often the source
+# publishes. The AEC Transparency Register releases federal annual returns
+# ONCE a year, on the first working day of February. We refresh in mid-March —
+# comfortably after the February publication and any early corrections — so a
+# yearly cron is the honest cadence; anything more frequent would re-download
+# identical data. State/territory registers publish no bulk exports and are
+# not collected here; the site keeps a curated static snapshot for those
+# (src/data/donations.ts).
+
+on:
+  schedule:
+    - cron: '23 2 15 3 *' # 02:23 UTC on 15 March, yearly
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  # Needed to dispatch deploy.yml after committing: pushes made with
+  # GITHUB_TOKEN do not fire `on: push` workflows.
+  actions: write
+
+concurrency:
+  group: data-pipeline
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
+
+      # collect.mjs guards against empty/degenerate writes itself: it exits
+      # non-zero WITHOUT touching public/data/donations.json if the download
+      # fails, the CSV schema changes, or the normalized output falls below
+      # sanity floors (record count, FY coverage, grand total).
+      - name: Collect AEC Transparency Register data
+        run: node pipeline/collect.mjs
+
+      # Second guard: the test suite validates the refreshed dataset's shape
+      # (record floor, FY window, well-formed records) before we commit it.
+      - name: Validate refreshed dataset
+        run: npm test
+
+      - name: Commit refreshed dataset
+        id: commit
+        run: |
+          if git diff --quiet -- public/data/donations.json; then
+            echo "Dataset unchanged — nothing to commit."
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add public/data/donations.json
+            git commit -m "data: yearly AEC Transparency Register refresh"
+            git push
+            echo "pushed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Trigger deploy
+        if: steps.commit.outputs.pushed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run deploy.yml --ref main

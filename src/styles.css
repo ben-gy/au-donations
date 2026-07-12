@@ -1279,3 +1279,26 @@ select {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
+
+/* ---------------------------------------------------------------------- */
+/* Boot & data-pipeline states                                            */
+/* ---------------------------------------------------------------------- */
+
+.boot-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 60vh;
+  color: var(--text-tertiary);
+  font-size: var(--font-size-base);
+}
+
+.data-notice {
+  margin-top: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--status-warn);
+  border-radius: var(--radius-sm);
+  background: var(--accent-amber-soft);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+}

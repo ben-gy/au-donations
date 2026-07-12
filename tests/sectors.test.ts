@@ -5,7 +5,7 @@ import {
   buildNetwork,
   buildMatrix,
 } from '../src/utils/sectors';
-import { DONATIONS_FILTERED } from '../src/data/donations';
+import { STATE_DONATIONS_FILTERED } from '../src/data/donations';
 import type { Donation } from '../src/data/donations';
 
 const sample: Donation[] = [
@@ -70,8 +70,8 @@ describe('classifySector', () => {
   it('classifies gambling', () => {
     expect(classifySector(sample[7])).toBe('Hospitality & Gambling');
   });
-  it('classifies every donation in the full dataset', () => {
-    for (const d of DONATIONS_FILTERED) {
+  it('classifies every donation in the state snapshot', () => {
+    for (const d of STATE_DONATIONS_FILTERED) {
       const sector = classifySector(d);
       expect(sector).toBeTruthy();
       expect(typeof sector).toBe('string');
@@ -108,6 +108,16 @@ describe('buildNetwork', () => {
     expect(prattEdges).toHaveLength(2);
     const prattToLib = prattEdges.find((e) => e.targetId === 'r:LIB');
     expect(prattToLib?.amount).toBe(500_000);
+  });
+  it('caps donor nodes at maxDonors, keeping the largest and reporting the true count', () => {
+    const { nodes, edges, totalDonorCount } = buildNetwork(sample, 2);
+    const donors = nodes.filter((n) => n.type === 'donor');
+    expect(donors).toHaveLength(2);
+    expect(totalDonorCount).toBe(7);
+    // Largest donor survives the cap; every remaining edge points from a kept donor.
+    expect(donors.some((n) => n.id === 'd:Mineralogy Pty Ltd')).toBe(true);
+    const keptIds = new Set(donors.map((n) => n.id));
+    for (const e of edges) expect(keptIds.has(e.sourceId)).toBe(true);
   });
 });
 

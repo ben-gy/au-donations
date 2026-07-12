@@ -177,8 +177,11 @@ export type NetworkEdge = {
   amount: number;
 };
 
-export function buildNetwork(donations: Donation[]): { nodes: NetworkNode[]; edges: NetworkEdge[] } {
-  const donorMap = new Map<string, { total: number; sector: Sector }>();
+export function buildNetwork(
+  donations: Donation[],
+  maxDonors: number = 250,
+): { nodes: NetworkNode[]; edges: NetworkEdge[]; totalDonorCount: number } {
+  let donorMap = new Map<string, { total: number; sector: Sector }>();
   const recipientMap = new Map<string, { total: number; partyCode: string }>();
   const edgeMap = new Map<string, number>();
 
@@ -196,6 +199,19 @@ export function buildNetwork(donations: Donation[]): { nodes: NetworkNode[]; edg
     // Edges (donor → party)
     const ek = `${d.donor}||${d.recipientParty}`;
     edgeMap.set(ek, (edgeMap.get(ek) ?? 0) + d.amount);
+  }
+
+  // With the full federal dataset there can be thousands of donors; the
+  // O(donors²) force simulation (and the readability of the map) requires a
+  // cap. Keep the top donors by total and drop the long tail's edges.
+  const totalDonorCount = donorMap.size;
+  if (donorMap.size > maxDonors) {
+    donorMap = new Map(
+      [...donorMap.entries()].sort((a, b) => b[1].total - a[1].total).slice(0, maxDonors),
+    );
+    for (const key of [...edgeMap.keys()]) {
+      if (!donorMap.has(key.split('||')[0])) edgeMap.delete(key);
+    }
   }
 
   const nodes: NetworkNode[] = [];
@@ -248,7 +264,7 @@ export function buildNetwork(donations: Donation[]): { nodes: NetworkNode[]; edg
     edges.push({ sourceId: `d:${donor}`, targetId: `r:${party}`, amount });
   }
 
-  return { nodes, edges };
+  return { nodes, edges, totalDonorCount };
 }
 
 /**
