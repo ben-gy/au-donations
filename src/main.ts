@@ -211,7 +211,7 @@ function aboutModalHtml(): string {
     </ul>
 
     <h3>Who built this?</h3>
-    <p>Built by <a href="https://benrichardson.dev/" target="_blank" rel="noopener noreferrer">benrichardson.dev</a> · <a href="https://sites.benrichardson.dev" target="_blank" rel="noopener">more tools &amp; sites</a>. Non-partisan, no tracking, no ads. Code is self-contained static HTML — you can archive this page for offline reference.</p>
+    <p>Built by <a href="https://benrichardson.dev/" target="_blank" rel="noopener noreferrer">benrichardson.dev</a> · <a href="https://hub.benrichardson.dev" target="_blank" rel="noopener">more tools &amp; sites</a>. Non-partisan, no tracking, no ads. Code is self-contained static HTML — you can archive this page for offline reference.</p>
   `;
 }
 
