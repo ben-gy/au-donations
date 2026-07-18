@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://au-donations.benrichardson.dev/sitemap.xml
