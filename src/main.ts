@@ -1,3 +1,8 @@
+// feedback:begin (managed by hub/scripts/feedback/backfill.mjs)
+import { mountFeedback } from './feedback';
+mountFeedback();
+// feedback:end
+
 import './styles.css';
 import { STATE_DONATIONS_FILTERED, type Donation, type DonorType } from './data/donations';
 import { loadFederalDonations, type FederalMeta } from './data/federal';
