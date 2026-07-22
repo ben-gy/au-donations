@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Ben Richardson — https://benrichardson.dev
+// Additional terms under AGPL-3.0 section 7(b) apply; see ADDITIONAL-TERMS.md.
 // State & territory register supplement — a curated snapshot of donations
 // drawn from the eight state/territory disclosure registers (NSW, VIC, QLD,
 // WA, SA, TAS, ACT, NT).

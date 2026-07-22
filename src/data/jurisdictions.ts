@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Ben Richardson — https://benrichardson.dev
+// Additional terms under AGPL-3.0 section 7(b) apply; see ADDITIONAL-TERMS.md.
 // Comparison data for Australia's 8 political donation disclosure regimes.
 // Thresholds and cadence figures reflect publicly documented rules as of
 // early 2026 and are summarised in the About modal. Amounts in AUD.
